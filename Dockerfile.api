@@ -1,0 +1,44 @@
+# =============================================================================
+# Dockerfile.api — Minimal image for the standalone Hono API service
+#
+# Use this when you want a smaller image that only runs the API service,
+# without Next.js build artifacts. Otherwise use the unified Dockerfile
+# with SERVICE_MODE=api.
+# =============================================================================
+
+FROM node:20-slim AS runner
+WORKDIR /app
+
+# System dependencies for Prisma
+RUN apt-get update -y && \
+    apt-get install -y openssl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+
+# Install dependencies
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY packages ./packages
+COPY prisma ./prisma
+RUN corepack enable pnpm && \
+    pnpm --filter velobase-harness... install --frozen-lockfile --prod --ignore-scripts && \
+    pnpm prisma generate && \
+    rm -rf /root/.cache
+
+# Create non-root user and logs directory
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 apiuser && \
+    mkdir -p /app/logs && chown apiuser:nodejs /app/logs
+
+# Preserve the complete backend import closure, including compatibility entries.
+COPY --chown=apiuser:nodejs src ./src
+COPY --chown=apiuser:nodejs services ./services
+COPY --chown=apiuser:nodejs tsconfig.json ./
+COPY --chown=apiuser:nodejs public/data/disposable-domains.txt ./public/data/disposable-domains.txt
+
+USER apiuser
+
+EXPOSE 3002
+
+CMD ["node", "--import", "tsx", "src/api/index.ts"]

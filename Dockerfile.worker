@@ -1,0 +1,35 @@
+FROM node:20-slim AS runner
+WORKDIR /app
+
+# Install OpenSSL for Prisma
+RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+
+# Install dependencies
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY packages ./packages
+COPY prisma ./prisma
+RUN corepack enable pnpm && \
+    pnpm --filter velobase-harness... install --frozen-lockfile --prod --ignore-scripts && \
+    pnpm prisma generate && \
+    rm -rf /root/.cache
+
+# Create non-root user and logs directory
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 worker && \
+    mkdir -p /app/logs && chown worker:nodejs /app/logs
+
+# Preserve the complete backend import closure, including compatibility entries.
+COPY --chown=worker:nodejs src ./src
+COPY --chown=worker:nodejs services ./services
+COPY --chown=worker:nodejs tsconfig.json ./
+COPY --chown=worker:nodejs public/data/disposable-domains.txt ./public/data/disposable-domains.txt
+
+USER worker
+
+EXPOSE 3001
+
+# Start worker
+CMD ["node", "--import", "tsx", "src/workers/index.ts"]
